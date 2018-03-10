@@ -2,7 +2,7 @@
  * WakeUpLight.c
  *
  * Created: 13.10.2016 15:39:11
- * Author : Ralf
+ * Author : Ralf/Stone
  */ 
 
 #ifndef F_CPU
