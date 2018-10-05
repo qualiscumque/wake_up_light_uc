@@ -16,6 +16,14 @@
 
 #include "I2C_slave.h"
 
+
+//Connected PINS:
+// Pin09: (PCINT21/OC0B/T1) PD5
+// Pin10: (PCINT22/OC0A/AIN0) PD6
+// Pin13: (PCINT1/OC1A) PB1
+// Pin14: (PCINT2/SS/OC1B) PB2
+
+
 const uint16_t pwmtable_16[256] PROGMEM =
 {
 	0, 1, 1, 1, 1, 1, 1, 1, 1, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 3,
@@ -42,7 +50,7 @@ const uint16_t pwmtable_16[256] PROGMEM =
 
 void ioinit (void)
 {
-	DDRD = 0xFF; //Mark PORTC as output
+	DDRD = 0xFF; //Mark PORTD as output
 	DDRB |= 1 << PB1;
 	DDRB |= 1 << PB2;	
 }
@@ -55,17 +63,17 @@ void my_delay (uint16_t milliseconds)
 
 void pwm_up_down (const uint16_t pwm_table[], int16_t size, uint16_t delay)
 {
-	int16_t tmp;
+	int16_t tmp = 0;
 	
 	for (tmp = 0; tmp < size; tmp++)
 	{
-		OCR1A = pgm_read_word (& pwm_table[tmp]);
+		OCR1A = pgm_read_word(&pwm_table[tmp]);
 		my_delay (delay);
 	}
 	
 	for (tmp = size-1; tmp >= 0; tmp--)
 	{
-		OCR1A = pgm_read_word (& pwm_table[tmp]);
+		OCR1A = pgm_read_word(&pwm_table[tmp]);
 		my_delay (delay);
 	}
 }
@@ -86,9 +94,18 @@ void pwm_16_256 (uint16_t delay)
 
 int main(void)
 {
-    int16_t step_time = 400;
+    int16_t step_time = 200;
 		
     ioinit();
+
+	PORTD = 0x00;
+	PORTB = 0x00;
+	_delay_ms(500);
+	
+	PORTD = 0xFF;
+	PORTB = 0xFF;
+	_delay_ms(500);
+
 	
 	I2C_init(0x32); // initialize as slave with address 0x32
 	
@@ -100,12 +117,27 @@ int main(void)
 	
 		if (rxbuffer[0] != 0)
 		{
-			
-			if (rxbuffer[0] == 1)
+				
+			switch(rxbuffer[0])
 			{
-				//pwm_16_256(step_time/16, 1);
+			case 1:
+				PORTD ^= (1 << PD5);
+				break;
+			case 2:
+				PORTD ^= (1 << PD6);
+				break;
+			case 3:
+				PORTB ^= (1 << PB1);
+				break;
+			case 4:
+				PORTB ^= (1 << PB2);
+				break;
+			case 9:
 				pwm_16_256(step_time/16);
+				break;
 			}
+			
+
 			rxbuffer[0] = 0;			
 		}
 
