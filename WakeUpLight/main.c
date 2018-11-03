@@ -13,16 +13,32 @@
 #include <avr/pgmspace.h>
 #include <util/delay.h>
 #include <avr/interrupt.h>
+#include <stdbool.h>
+#include <stddef.h>
+#include <string.h>
 
 #include "I2C_slave.h"
 
 
-//Connected PINS:
+// Connected PINS:
 // Pin09: (PCINT21/OC0B/T1) PD5
 // Pin10: (PCINT22/OC0A/AIN0) PD6
 // Pin13: (PCINT1/OC1A) PB1
 // Pin14: (PCINT2/SS/OC1B) PB2
 
+
+// Protocol Description:
+// |---------+-------------------+-------------------------------------------------------|
+// | Address | Name              | Description                                           |
+// |---------+-------------------+-------------------------------------------------------|
+// | 0x00    | Command Field     | Command field: 0xFF = Invalidate                      |
+// |         |                   | 0xCC = Clear input buffer, other values are ignored   |
+// | 0x01    | Led Select        | LED number to address                                 |
+// | 0x02    | Led value high    | Target brightness value for LED, 16 Bit High          |
+// | 0x03    | Led value low     | Target brightness value for LED, 16 Bit High          |
+// | 0x04    | Fading delay high | Fading delay value in µs, 16 Bit High                 |
+// | 0x05    | Fading delay low  | Fading delay value in µs, 16 Bit High                 |
+// |---------+-------------------+-------------------------------------------------------|
 
 const uint16_t pwmtable_16[256] PROGMEM =
 {
@@ -51,8 +67,7 @@ const uint16_t pwmtable_16[256] PROGMEM =
 void ioinit (void)
 {
 	DDRD = 0xFF; //Mark PORTD as output
-	DDRB |= 1 << PB1;
-	DDRB |= 1 << PB2;	
+	DDRB = 0xFF; //Mark PORTB as output	
 }
 
 void my_delay (uint16_t milliseconds)
@@ -67,21 +82,33 @@ void pwm_up_down (const uint16_t pwm_table[], int16_t size, uint16_t delay)
 	
 	for (tmp = 0; tmp < size; tmp++)
 	{
+		OCR0A = pgm_read_word(&pwm_table[tmp]);
+		OCR0B = pgm_read_word(&pwm_table[tmp]);
+				
 		OCR1A = pgm_read_word(&pwm_table[tmp]);
+		OCR1B = pgm_read_word(&pwm_table[tmp]);
 		my_delay (delay);
 	}
 	
 	for (tmp = size-1; tmp >= 0; tmp--)
 	{
+		OCR0A = pgm_read_word(&pwm_table[tmp]);
+		OCR0B = pgm_read_word(&pwm_table[tmp]);		
+		
 		OCR1A = pgm_read_word(&pwm_table[tmp]);
+		OCR1B = pgm_read_word(&pwm_table[tmp]);
+
 		my_delay (delay);
 	}
 }
 
 void pwm_16_256 (uint16_t delay)
 {
+	TCCR0A = (1<<WGM02) | (1<<WGM01) | (1<<WGM00) | (1<<COM0A1) | (1<<COM0B1);
+	TCCR0B = (0<<WGM02) | (1<<CS02) | (0<<CS01) | (1<<CS00);
+		
 	// 16 Bit Fast PWM
-	TCCR1A = (1 << WGM11) | (1 << COM1A1);
+	TCCR1A = (1 << WGM11) | (1 << COM1A1) | (1 << COM1B1);
 	// stop timer
 	TCCR1B = 0;
 	// TOP for PWM, full 16 Bit
@@ -92,21 +119,50 @@ void pwm_16_256 (uint16_t delay)
 	pwm_up_down(pwmtable_16, 256, delay);
 }
 
+
+void set_pin(volatile uint8_t* _port, uint8_t _nr)
+{
+	*_port |= (1 << _nr);
+}
+
+void reset_pin(volatile uint8_t* _port, uint8_t _nr)
+{
+	*_port &= ~(1 << _nr);
+}
+
+void switch_pin(uint8_t led_nr, uint8_t power)
+{
+    void (*switch_fct)(volatile uint8_t*, uint8_t) = NULL;
+	switch_fct = (bool)power ? &set_pin : &reset_pin;
+
+	switch(led_nr)
+	{
+		case 1:
+		switch_fct(&PORTD, PD5);
+		break;
+		
+		case 2:
+		switch_fct(&PORTD, PD6);
+		break;
+		
+		case 3:
+		switch_fct(&PORTB, PB1);	
+		break;
+		
+		case 4:
+		switch_fct(&PORTB, PB2);	
+		break;
+	}
+}
+
+
 int main(void)
 {
-    int16_t step_time = 200;
-		
-    ioinit();
-
-	PORTD = 0x00;
-	PORTB = 0x00;
-	_delay_ms(500);
-	
-	PORTD = 0xFF;
-	PORTB = 0xFF;
-	_delay_ms(500);
-
-	
+	int8_t led_nr = 0;
+    uint16_t led_brightness = 0;
+    uint16_t led_delay = 0;
+       
+	ioinit();
 	I2C_init(0x32); // initialize as slave with address 0x32
 	
 	// allow interrupts
@@ -114,37 +170,22 @@ int main(void)
 		
     while (1) 
     {
-	
-		if (rxbuffer[0] != 0)
+		if (rxbuffer[0] == 0xFF) // Flush
 		{
-				
-			switch(rxbuffer[0])
-			{
-			case 1:
-				PORTD ^= (1 << PD5);
-				break;
-			case 2:
-				PORTD ^= (1 << PD6);
-				break;
-			case 3:
-				PORTB ^= (1 << PB1);
-				break;
-			case 4:
-				PORTB ^= (1 << PB2);
-				break;
-			case 9:
-				pwm_16_256(step_time/16);
-				break;
-			}
+			led_nr = rxbuffer[1];
+			led_brightness = (rxbuffer[2] << 8) | rxbuffer[3];
+			led_delay = (rxbuffer[4] << 8) | rxbuffer[5];
 			
-
-			rxbuffer[0] = 0;			
+			switch_pin(led_nr, led_brightness > 0 ? 1 : 0);
+			
+			// clear input buffer
+			memset(rxbuffer, 0, sizeof(rxbuffer));
 		}
-
-		//PORTD = 0x00;
-		//_delay_ms(500);
-		//PORTD = 0xFF;
-		//_delay_ms(500);
+		
+		if (rxbuffer[0] == 0xCC) // Clear input buffer
+		{
+			memset(rxbuffer, 0, sizeof(rxbuffer));
+		}
     }
 }
 
