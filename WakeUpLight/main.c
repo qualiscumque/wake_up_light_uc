@@ -40,6 +40,9 @@
 // | 0x05    | Fading delay low  | Fading delay value in µs, 16 Bit High                 |
 // |---------+-------------------+-------------------------------------------------------|
 
+
+uint16_t g_pwm_values[4] = {0, 0, 0, 0};
+
 const uint16_t pwmtable_16[256] PROGMEM =
 {
 	0, 1, 1, 1, 1, 1, 1, 1, 1, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 3,
@@ -70,15 +73,15 @@ void ioinit (void)
 	DDRB = 0xFF; //Mark PORTB as output	
 }
 
-void set_pwm_value(const uint16_t pwm_table[], int16_t val)
+void set_pwm_values(const uint16_t pwm_table[])
 {	
-	OCR0A = pgm_read_word(&pwm_table[val >> 1]);
-	OCR0B = pgm_read_word(&pwm_table[val >> 1]);
-	OCR1A = pgm_read_word(&pwm_table[val]);
-	OCR1B = pgm_read_word(&pwm_table[val]);
+	OCR0B = pgm_read_word(&pwm_table[g_pwm_values[0] >> 1]);
+	OCR0A = pgm_read_word(&pwm_table[g_pwm_values[1] >> 1]);
+	OCR1A = pgm_read_word(&pwm_table[g_pwm_values[2]]);
+	OCR1B = pgm_read_word(&pwm_table[g_pwm_values[3]]);
 }
 
-void setup_pwm(const uint16_t val, const uint8_t select_mask)
+void setup_pwm(const uint8_t select_mask)
 {
 	TCCR0A = (1<<WGM02) | (1<<WGM01) | (1<<WGM00);
 	if((select_mask & 0b0001) != 0) {
@@ -107,7 +110,7 @@ void setup_pwm(const uint16_t val, const uint8_t select_mask)
 	// prescaler 1 -> ~122 Hz PWM frequency
 	TCCR1B = (1 << WGM12) | (1 << WGM13) | 1;
 	
-	set_pwm_value(pwmtable_16, val);
+	set_pwm_values(pwmtable_16);
 }
 
 
@@ -166,10 +169,13 @@ int main(void)
 			led_nr = rxbuffer[1];
 			led_brightness = (rxbuffer[2] << 8) | rxbuffer[3];
 			led_delay = (rxbuffer[4] << 8) | rxbuffer[5];
-			
+
+			// update global pwm value settings
+			g_pwm_values[led_nr - 1] = led_brightness;
+						
 			// invoke
-			setup_pwm(rxbuffer[3], 1 << (led_nr -1));
-				
+			setup_pwm(0b1111); // activate every channel
+							
 			// clear input buffer
 			memset(rxbuffer, 0, sizeof(rxbuffer));
 		}
