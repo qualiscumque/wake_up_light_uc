@@ -70,45 +70,36 @@ void ioinit (void)
 	DDRB = 0xFF; //Mark PORTB as output	
 }
 
-void my_delay (uint16_t milliseconds)
-{
-	for (; milliseconds > 0; milliseconds--)
-	_delay_ms (1);
+void set_pwm_value(const uint16_t pwm_table[], int16_t val)
+{	
+	OCR0A = pgm_read_word(&pwm_table[val >> 1]);
+	OCR0B = pgm_read_word(&pwm_table[val >> 1]);
+	OCR1A = pgm_read_word(&pwm_table[val]);
+	OCR1B = pgm_read_word(&pwm_table[val]);
 }
 
-void pwm_up_down (const uint16_t pwm_table[], int16_t size, uint16_t delay)
+void setup_pwm(const uint16_t val, const uint8_t select_mask)
 {
-	int16_t tmp = 0;
-	
-	for (tmp = 0; tmp < size; tmp++)
-	{
-		OCR0A = pgm_read_word(&pwm_table[tmp]);
-		OCR0B = pgm_read_word(&pwm_table[tmp]);
-				
-		OCR1A = pgm_read_word(&pwm_table[tmp]);
-		OCR1B = pgm_read_word(&pwm_table[tmp]);
-		my_delay (delay);
+	TCCR0A = (1<<WGM02) | (1<<WGM01) | (1<<WGM00);
+	if((select_mask & 0b0001) != 0) {
+		TCCR0A |= (1<<COM0B1);
+	}
+	if((select_mask & 0b0010) != 0) {
+		TCCR0A |= (1<<COM0A1);
 	}
 	
-	for (tmp = size-1; tmp >= 0; tmp--)
-	{
-		OCR0A = pgm_read_word(&pwm_table[tmp]);
-		OCR0B = pgm_read_word(&pwm_table[tmp]);		
-		
-		OCR1A = pgm_read_word(&pwm_table[tmp]);
-		OCR1B = pgm_read_word(&pwm_table[tmp]);
-
-		my_delay (delay);
-	}
-}
-
-void pwm_16_256 (uint16_t delay)
-{
-	TCCR0A = (1<<WGM02) | (1<<WGM01) | (1<<WGM00) | (1<<COM0A1) | (1<<COM0B1);
-	TCCR0B = (0<<WGM02) | (1<<CS02) | (0<<CS01) | (1<<CS00);
+	TCCR0B = (0<<WGM02) | (1<<CS02) | (0<<CS01);
+	
 		
 	// 16 Bit Fast PWM
-	TCCR1A = (1 << WGM11) | (1 << COM1A1) | (1 << COM1B1);
+	TCCR1A = (1 << WGM11);
+	if((select_mask & 0b0100) != 0) {
+		TCCR1A |= (1<<COM1A1);
+	}
+	if((select_mask & 0b1000) != 0) {
+		TCCR1A |= (1<<COM1B1);
+	}
+	
 	// stop timer
 	TCCR1B = 0;
 	// TOP for PWM, full 16 Bit
@@ -116,7 +107,7 @@ void pwm_16_256 (uint16_t delay)
 	// prescaler 1 -> ~122 Hz PWM frequency
 	TCCR1B = (1 << WGM12) | (1 << WGM13) | 1;
 	
-	pwm_up_down(pwmtable_16, 256, delay);
+	set_pwm_value(pwmtable_16, val);
 }
 
 
@@ -176,8 +167,9 @@ int main(void)
 			led_brightness = (rxbuffer[2] << 8) | rxbuffer[3];
 			led_delay = (rxbuffer[4] << 8) | rxbuffer[5];
 			
-			switch_pin(led_nr, led_brightness > 0 ? 1 : 0);
-			
+			// invoke
+			setup_pwm(rxbuffer[3], 1 << (led_nr -1));
+				
 			// clear input buffer
 			memset(rxbuffer, 0, sizeof(rxbuffer));
 		}
